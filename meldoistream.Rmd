@@ -1,0 +1,153 @@
+---
+title: "Leveraging Bayesian Analysis for Data-Driven Product Decisions: A Case Study with MelodiStream"
+output: html_notebook
+---
+
+```{r}
+# Install and load required packages
+# if (!requireNamespace("rstan", quietly = TRUE)) install.packages("rstan")
+# if (!requireNamespace("brms", quietly = TRUE)) install.packages("brms")
+# if (!requireNamespace("bayesplot", quietly = TRUE)) install.packages("bayesplot")
+# if (!requireNamespace("tidyverse", quietly = TRUE)) install.packages("tidyverse")
+
+library(rstan)
+library(brms)
+library(bayesplot)
+library(tidyverse)
+```
+
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+simulate_experiment <- function(n_per_group, true_effect) {
+  control <- rnorm(n_per_group, 45, 15)
+  treatment <- rnorm(n_per_group, 45 + true_effect, 15)
+  
+  data <- list(y = c(control, treatment),
+               group = c(rep(0, n_per_group), rep(1, n_per_group)),
+               N = 2 * n_per_group)
+  
+  model <- "
+data {
+  int<lower=0> N;
+  vector[N] y;
+  array[N] int<lower=0, upper=1> group;
+}
+parameters {
+  real mu;
+  real effect;
+  real<lower=0> sigma;
+}
+transformed parameters {
+  vector[N] mu_effect;
+  for (i in 1:N) {
+    mu_effect[i] = mu + effect * group[i];
+  }
+}
+model {
+  mu ~ normal(45, 10);
+  effect ~ normal(0, 5);
+  sigma ~ cauchy(0, 5);
+  y ~ normal(mu_effect, sigma);
+}
+"
+  
+  fit <- stan(model_code = model, data = data, chains = 2, iter = 2000, warmup = 1000, thin = 2, refresh = 0)
+  
+  samples <- as.data.frame(fit)  # Extract the samples as a data frame
+  prob_positive = mean(samples$effect > 0)
+  
+  return(prob_positive > 0.95)
+}
+```
+
+```{r}
+sample_sizes <- seq(100, 300, by = 50)
+results <- sapply(sample_sizes, function(n) {
+  mean(replicate(10, simulate_experiment(n, true_effect = 5)))
+})
+
+min_sample_size <- sample_sizes[which(results > 0.8)[1]]
+print(paste("Recommended sample size per group:", min_sample_size))
+```
+
+
+```{r}
+# 2. Data Generation
+n <- min_sample_size * 2  # Total sample size
+group_assignment <- sample(c("control", "treatment"), size = n, replace = TRUE)
+
+# Simulate data collection (in practice, this would be real user data)
+current_algo <- rnorm(sum(group_assignment == "control"), mean = 45, sd = 15)
+new_algo <- rnorm(sum(group_assignment == "treatment"), mean = 50, sd = 15)
+
+data <- data.frame(
+  listening_time = c(current_algo, new_algo),
+  group = group_assignment)
+```
+
+```{r}
+library(ggplot2)
+
+# Create the boxplot
+ggplot(data, aes(x = group, y = listening_time, fill = group)) +
+  geom_boxplot() +
+  labs(title = "Listening Time Comparison Between Algorithms",
+       x = "Algorithm",
+       y = "Listening Time") +
+  theme_minimal()
+```
+```{r}
+library(ggplot2)
+ggplot(data, aes(x = listening_time, fill = group)) +
+  geom_density(alpha = 0.7) +
+  labs(title = "Density Plot of Listening Time by Algorithm",
+       x = "Listening Time",
+       y = "Density") +
+  theme_minimal()
+```
+
+```{r}
+# 3. Bayesian Model
+model <- brm(
+  formula = listening_time ~ group,
+  data = data,
+  family = gaussian(),
+  prior = c(
+    prior(normal(45, 10), class = "Intercept"),
+    prior(normal(0, 5), class = "b"),
+    prior(cauchy(0, 5), class = "sigma")
+  ),
+  chains = 4,
+  iter = 4000,
+  warmup = 2000,
+  refresh = 0
+)
+```
+
+
+```{r}
+# 4. Results Interpretation
+summary(model)
+
+hypothesis(model, "grouptreatment > 0")
+
+posterior_samples <- posterior_samples(model)
+mean_diff <- mean(posterior_samples$b_grouptreatment)
+ci <- quantile(posterior_samples$b_grouptreatment, c(0.025, 0.975))
+
+print(paste("Expected difference:", round(mean_diff, 2), "minutes"))
+print(paste("95% Credible Interval:", round(ci[1], 2), "to", round(ci[2], 2), "minutes"))
+```
+
+
+```{r}
+# 5. Visualization
+plot <- mcmc_areas(posterior_samples, pars = "b_grouptreatment", prob = 0.95) +
+  ggtitle("Posterior Distribution of the Effect")
+
+print(plot)
+```
+
