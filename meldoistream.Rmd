@@ -4,183 +4,254 @@ output: html_notebook
 ---
 
 ```{r}
-# Install and load required packages (commented out since they are only needed if the packages are not already installed)
+# Install and load required packages
 # if (!requireNamespace("rstan", quietly = TRUE)) install.packages("rstan")
 # if (!requireNamespace("brms", quietly = TRUE)) install.packages("brms")
 # if (!requireNamespace("bayesplot", quietly = TRUE)) install.packages("bayesplot")
 # if (!requireNamespace("tidyverse", quietly = TRUE)) install.packages("tidyverse")
 
-# Loading necessary libraries for Bayesian modeling and visualization
-library(rstan)  # For Bayesian modeling using Stan
-library(brms)  # For high-level Bayesian modeling using 'brms' which interfaces with Stan
-library(bayesplot)  # For plotting Bayesian models and posterior distributions
-library(tidyverse)  # For data manipulation and visualization
-
+library(rstan)
+library(brms)
+library(bayesplot)
+library(tidyverse)
 ```
 
 
 ```{r}
+# Set seed for reproducibility
 set.seed(123)
 
-# Function to simulate an experiment comparing a control group to a treatment group
 simulate_experiment <- function(n_per_group, true_effect) {
-  # Simulating control group data (normally distributed with mean 45 and standard deviation 15)
   control <- rnorm(n_per_group, 45, 15)
-  
-  # Simulating treatment group data with an added 'true effect'
   treatment <- rnorm(n_per_group, 45 + true_effect, 15)
   
-  # Creating a data list to pass to the Bayesian model
-  data <- list(y = c(control, treatment),  # Concatenating control and treatment results
-               group = c(rep(0, n_per_group), rep(1, n_per_group)),  # Group labels (0 for control, 1 for treatment)
-               N = 2 * n_per_group)  # Total number of observations
+  data <- list(y = c(control, treatment),
+               group = c(rep(0, n_per_group), rep(1, n_per_group)),
+               N = 2 * n_per_group)
   
-  # Defining the Stan model for Bayesian analysis
   model <- "
-  data {
-    int<lower=0> N;  # Total number of observations
-    vector[N] y;  # Outcome variable (listening time)
-    array[N] int<lower=0, upper=1> group;  # Group variable (control or treatment)
+data {
+  int<lower=0> N;
+  vector[N] y;
+  array[N] int<lower=0, upper=1> group;
+}
+parameters {
+  real mu;
+  real effect;
+  real<lower=0> sigma;
+}
+transformed parameters {
+  vector[N] mu_effect;
+  for (i in 1:N) {
+    mu_effect[i] = mu + effect * group[i];
   }
-  parameters {
-    real mu;  # Average listening time for control group
-    real effect;  # Treatment effect (difference between control and treatment groups)
-    real<lower=0> sigma;  # Standard deviation of the outcome
-  }
-  transformed parameters {
-    vector[N] mu_effect;  # Expected value of outcome for each group
-    for (i in 1:N) {
-      mu_effect[i] = mu + effect * group[i];  # Adding treatment effect only for treatment group
-    }
-  }
-  model {
-    mu ~ normal(45, 10);  # Prior for control group mean
-    effect ~ normal(0, 5);  # Prior for treatment effect
-    sigma ~ cauchy(0, 5);  # Prior for standard deviation
-    y ~ normal(mu_effect, sigma);  # Likelihood for observed data
-  }
-  "
+}
+model {
+  mu ~ normal(45, 10);
+  effect ~ normal(0, 5);
+  sigma ~ cauchy(0, 5);
+  y ~ normal(mu_effect, sigma);
+}
+"
   
-  # Running the Bayesian model using Stan with 2 chains and 2000 iterations
   fit <- stan(model_code = model, data = data, chains = 2, iter = 2000, warmup = 1000, thin = 2, refresh = 0)
   
-  # Extracting samples from the posterior distribution
-  samples <- as.data.frame(fit)
-  
-  # Calculating the probability that the treatment effect is greater than zero
+  samples <- as.data.frame(fit)  # Extract the samples as a data frame
   prob_positive = mean(samples$effect > 0)
   
-  # Returning TRUE if the probability of a positive effect is greater than 95%
   return(prob_positive > 0.95)
 }
 ```
 
 ```{r}
-# Defining a range of sample sizes to test
 sample_sizes <- seq(100, 300, by = 50)
-
-# Running the simulation 10 times for each sample size and calculating the proportion of times the effect is significant
 results <- sapply(sample_sizes, function(n) {
   mean(replicate(10, simulate_experiment(n, true_effect = 5)))
 })
 
-# Finding the smallest sample size that gives an 80% chance of detecting a significant effect
 min_sample_size <- sample_sizes[which(results > 0.8)[1]]
-
-# Printing the recommended sample size per group
 print(paste("Recommended sample size per group:", min_sample_size))
-
 ```
 
 
 ```{r}
-# 2. Data Generation: Simulating a data collection process
-n <- min_sample_size * 2  # Total sample size (both control and treatment)
-group_assignment <- sample(c("control", "treatment"), size = n, replace = TRUE)  # Random assignment of individuals to control or treatment group
+# 2. Data Generation
+n <- min_sample_size * 2  # Total sample size
+group_assignment <- sample(c("control", "treatment"), size = n, replace = TRUE)
 
-# Simulating listening time for the control and treatment groups
-current_algo <- rnorm(sum(group_assignment == "control"), mean = 45, sd = 15)  # Control group (current algorithm)
-new_algo <- rnorm(sum(group_assignment == "treatment"), mean = 50, sd = 15)  # Treatment group (new algorithm)
+# Simulate data collection (in practice, this would be real user data)
+current_algo <- rnorm(sum(group_assignment == "control"), mean = 45, sd = 15)
+new_algo <- rnorm(sum(group_assignment == "treatment"), mean = 50, sd = 15)
 
-# Creating a data frame with the simulated listening times and group assignments
 data <- data.frame(
-  listening_time = c(current_algo, new_algo),  # Listening time for both groups
-  group = group_assignment)  # Group assignment (control or treatment)
-
+  listening_time = c(current_algo, new_algo),
+  group = group_assignment)
 ```
 
 ```{r}
-l# Visualizing the listening times for the two groups using a boxplot
+library(ggplot2)
+
+# Create the boxplot
 ggplot(data, aes(x = group, y = listening_time, fill = group)) +
   geom_boxplot() +
-  labs(title = "Listening Time Comparison Between Algorithms",  # Plot title
-       x = "Algorithm",  # x-axis label
-       y = "Listening Time") +  # y-axis label
-  theme_minimal()  # Minimal plot theme
-
+  labs(title = "Listening Time Comparison Between Algorithms",
+       x = "Algorithm",
+       y = "Listening Time") +
+  theme_minimal()
 ```
-
 ```{r}
-# Creating a density plot to visualize the distribution of listening times for each group
+library(ggplot2)
 ggplot(data, aes(x = listening_time, fill = group)) +
-  geom_density(alpha = 0.7) +  # Density plot with transparency
-  labs(title = "Density Plot of Listening Time by Algorithm",  # Plot title
-       x = "Listening Time",  # x-axis label
-       y = "Density") +  # y-axis label
-  theme_minimal()  # Minimal plot theme
+  geom_density(alpha = 0.7) +
+  labs(title = "Density Plot of Listening Time by Algorithm",
+       x = "Listening Time",
+       y = "Density") +
+  theme_minimal()
 ```
 
 ```{r}
-# 3. Bayesian Model: Fitting a Bayesian regression model to estimate the effect of the treatment (new algorithm)
+# 3. Bayesian Model
 model <- brm(
-  formula = listening_time ~ group,  # Listening time is predicted by group (control vs treatment)
-  data = data,  # The dataset to use
-  family = gaussian(),  # Gaussian (normal) distribution for the outcome variable
+  formula = listening_time ~ group,
+  data = data,
+  family = gaussian(),
   prior = c(
-    prior(normal(45, 10), class = "Intercept"),  # Prior for the intercept (mean listening time for control)
-    prior(normal(0, 5), class = "b"),  # Prior for the effect of the treatment (group coefficient)
-    prior(cauchy(0, 5), class = "sigma")  # Prior for the residual standard deviation
+    prior(normal(45, 10), class = "Intercept"),
+    prior(normal(0, 5), class = "b"),
+    prior(cauchy(0, 5), class = "sigma")
   ),
-  chains = 4,  # Number of MCMC chains to run
-  iter = 4000,  # Number of iterations per chain
-  warmup = 2000,  # Number of warmup iterations
-  refresh = 0  # Suppress progress output
+  chains = 4,
+  iter = 4000,
+  warmup = 2000,
+  refresh = 0
 )
-
 ```
 
 
 ```{r}
 # 4. Results Interpretation
-summary(model)  # Print summary of the model fit
+summary(model)
 
-# Test hypothesis: Is the treatment effect greater than zero?
 hypothesis(model, "grouptreatment > 0")
 
-# Extract posterior samples from the model
 posterior_samples <- posterior_samples(model)
-
-# Calculate the mean of the posterior distribution for the treatment effect
 mean_diff <- mean(posterior_samples$b_grouptreatment)
-
-# Calculate the 95% credible interval for the treatment effect
 ci <- quantile(posterior_samples$b_grouptreatment, c(0.025, 0.975))
 
-# Print the expected difference in listening time due to the treatment
 print(paste("Expected difference:", round(mean_diff, 2), "minutes"))
-
-# Print the 95% credible interval for the treatment effect
 print(paste("95% Credible Interval:", round(ci[1], 2), "to", round(ci[2], 2), "minutes"))
-
 ```
 
 
 ```{r}
-# 5. Visualization: Plotting the posterior distribution for the treatment effect
+# 5. Visualization
 plot <- mcmc_areas(posterior_samples, pars = "b_grouptreatment", prob = 0.95) +
-  ggtitle("Posterior Distribution of the Effect")  # Plot title
+  ggtitle("Posterior Distribution of the Effect")
 
-# Display the plot
 print(plot)
+```
+```{r}
+
+# Trace plot for the parameters of the model
+stanplot(model, type = "trace")
+
+```
+
+```{r}
+# Posterior predictive check
+pp_check(model)
+
+```
+```{r}
+# Extract posterior samples for multiple parameters
+posterior_samples <- posterior_samples(model)
+
+# Posterior density plot for more parameters
+mcmc_areas(posterior_samples, pars = c("b_grouptreatment", "Intercept", "sigma"), prob = 0.95) +
+  ggtitle("Posterior Distribution of Parameters")
+
+```
+```{r}
+# Pairwise relationships between parameters
+mcmc_pairs(posterior_samples, pars = c("b_grouptreatment", "Intercept", "sigma"))
+
+```
+
+```{r}
+mcmc_intervals(posterior_samples, pars = c("b_grouptreatment", "Intercept")) +
+  ggtitle("Posterior Intervals for Treatment Effect and Intercept")
+
+```
+
+# Rather than running these plots individually we can put them on dashboard by creating a shiny application 
+```{r}
+library(shiny)
+# Define UI for the dashboard
+ui <- fluidPage(
+  titlePanel("Bayesian Analysis Dashboard"),
+  
+  # Sidebar layout to choose different plots
+  sidebarLayout(
+    sidebarPanel(
+      selectInput(
+        "plot_type",
+        "Choose a plot:",
+        choices = c(
+          "Posterior Distribution of Effect" = "posterior_effect",
+          "Trace Plot" = "trace",
+          "Posterior Predictive Check" = "pp_check",
+          "Posterior Distributions of All Parameters" = "posterior_all",
+          "Pairwise Relationships" = "pairs",
+          "Posterior Intervals" = "intervals"
+        )
+      )
+    ),
+    
+    # Main panel to display plots
+    mainPanel(
+      plotOutput("bayesianPlot")
+    )
+  )
+)
+
+# Define server logic for the plots
+server <- function(input, output) {
+  output$bayesianPlot <- renderPlot({
+    
+    # Depending on the user choice, render the respective plot
+    if (input$plot_type == "posterior_effect") {
+      # Posterior Distribution of Treatment Effect
+      plot <- mcmc_areas(posterior_samples, pars = "b_grouptreatment", prob = 0.95) +
+        ggtitle("Posterior Distribution of the Effect")
+      print(plot)
+      
+    } else if (input$plot_type == "trace") {
+      # Trace plot for the model parameters
+      stanplot(model, type = "trace")
+      
+    } else if (input$plot_type == "pp_check") {
+      # Posterior Predictive Check
+      pp_check(model)
+      
+    } else if (input$plot_type == "posterior_all") {
+      # Posterior density plot for multiple parameters
+      mcmc_areas(posterior_samples, pars = c("b_grouptreatment", "Intercept", "sigma"), prob = 0.95) +
+        ggtitle("Posterior Distribution of Parameters")
+      
+    } else if (input$plot_type == "pairs") {
+      # Pairwise relationships between parameters
+      mcmc_pairs(posterior_samples, pars = c("b_grouptreatment", "Intercept", "sigma"))
+      
+    } else if (input$plot_type == "intervals") {
+      # Posterior Intervals for Treatment Effect and Intercept
+      mcmc_intervals(posterior_samples, pars = c("b_grouptreatment", "Intercept")) +
+        ggtitle("Posterior Intervals for Treatment Effect and Intercept")
+    }
+  })
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
+
 ```
 
